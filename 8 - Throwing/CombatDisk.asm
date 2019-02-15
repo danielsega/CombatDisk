@@ -1,0 +1,1417 @@
+	PROCESSOR 6502
+    INCLUDE "vcs.h"
+    INCLUDE "MyMacro.h"
+	INCLUDE "macro.h"
+;==============================================================
+;DEFINE CONSTANTS
+;--------------------------------------------------------------
+;Sizes
+COURT_SIZE 		= 45 	;Size = Size X 2, Actuall size is 90
+BALL_SIZE		= 2
+
+;COLORS
+P0_COLOR		= $40	;RED
+P1_COLOR		= $84	;BLUE
+;==============================================================
+;END OF CONSTANTS
+;==============================================================
+
+;==============================================================
+;DEFINE VARIABLES: RAM $80 - $FF
+;==============================================================
+	SEG.U VARIABLES
+	ORG $80
+	
+;Temp Value
+temp				ds 1		;80
+
+;Random Value
+rand 				ds 1		;81
+
+;Player0 Position	
+p0_x 				ds 1		;82
+p0_y 				ds 1		;83
+
+;Player1 Position	
+p1_x 				ds 1		;84
+p1_y 				ds 1		;85
+
+;Ball Position
+ball_x				ds 1		;86
+ball_y				ds 1		;87
+
+;Player 0 Velocity
+p0_vel				ds 1		;88
+
+;Player 1 Velocity
+p1_vel				ds 1		;89
+
+;Ball Velocity
+ball_vel_x			ds 1		;8A
+ball_vel_y			ds 1		;8B
+		
+;Sprites Draws
+p0_draw 			ds 1		;8C
+p1_draw 			ds 1		;8D
+ball_draw			ds 1		;8E
+
+;Players Pointers
+p0_ptr 				ds.w 1 		;8F-90
+p1_ptr 				ds.w 1 		;91-92
+
+;Players Frame Counter
+p0_frame_counter	ds 1		;93
+p1_frame_counter	ds 1		;94
+
+;Frame per second for each player
+p0_fps				ds 1		;95
+p1_fps				ds 1		;96
+
+;Game Points
+p0_points			ds 1		;97
+p1_points			ds 1		;98
+
+;Digit graphics for the scoreboard
+p0_digit_gfx 		ds 1		;99
+p1_digit_gfx 		ds 1		;9A
+
+;Digits from the scoreboard from players points
+digit_ones			ds.w 1		;9B-9C
+digit_tens			ds.w 1		;9D-9E
+
+;Check if players are throwing: 
+is_p0_throwing		ds 1		;9F
+is_p1_throwing		ds 1		;A0
+
+;Timer for when players have to throw
+p0_has_to_throw		ds 1		;A1
+p1_has_to_throw		ds 1		;A2
+;==============================================================
+;END OF VARIABLES
+;==============================================================
+
+;==============================================================
+;Start of FILE
+;--------------------------------------------------------------
+;This is the location where our data is gonna be stored inside
+;our CARTRIDGE
+;==============================================================	
+	SEG CODE
+	ORG $F000
+
+;SUBROUTINES
+    
+;=====================================================	
+;Position Object:
+;-----------------------------------------------------
+;This will move our sprite to the desired location
+;-----------------------------------------------------
+;A = Destination
+;X = Desired Sprite
+;-----------------------------------------------------
+PosObj:
+	sec
+	sta WSYNC
+	
+DivLoop:
+	sbc #15
+	bcs DivLoop
+	
+	eor #7
+	asl
+	asl
+	asl
+	asl
+	
+	sta.wx HMP0,X
+	sta RESP0,X
+	rts	
+
+;=====================================================	
+;Move Objects and Check Collision
+;=====================================================
+
+;--PLAYER 0 Movement
+p0_move_up:
+	MOVECX_ADD_AND_CMP p0_y, p0_vel, #COURT_SIZE	
+	rts
+p0_move_down:
+	MOVECX_SBC_AND_CMP p0_y, p0_vel, #9	
+	rts
+p0_move_left:
+	MOVECX_SBC_AND_CMP p0_x, p0_vel, #$f
+	rts
+p0_move_right:
+	MOVECX_ADD_AND_CMP p0_x, p0_vel, #$46
+	rts
+	
+;--PLAYER 1 Movement
+p1_move_up:
+	MOVECX_ADD_AND_CMP p1_y, p1_vel, #COURT_SIZE	
+	rts
+p1_move_down:
+	MOVECX_SBC_AND_CMP p1_y, p1_vel, #9	
+	rts
+p1_move_left:
+	MOVECX_SBC_AND_CMP p1_x, p1_vel, #$50
+	rts
+p1_move_right:
+	MOVECX_ADD_AND_CMP p1_x, p1_vel, #$89
+	rts
+;=====================================================
+;RESET
+;-----------------------------------------------------
+;When you push down the GAME RESET switch, it will
+;cause an iterrrupt and set te PC (Pointer Counter)
+;at this memory location 
+;=====================================================
+Reset
+	CLEAN_START
+	
+	ldy #1
+	sty VDELP0
+	sty p0_vel
+	sty p1_vel
+	sty ball_vel_x
+	sty ball_vel_y
+	
+	ldx #$E8
+	stx COLUBK
+	
+	ldx #P0_COLOR
+	stx COLUP0
+	
+	ldx #P1_COLOR
+	stx COLUP1
+;=====================================================
+;END OF RESET
+;=====================================================
+
+;=====================================================
+;MAIN FRAME LOOP
+;-----------------------------------------------------
+;This is where all our ur instructions and data is
+;going to be processed and give us an output for our
+;FRAME
+;=====================================================	
+StartOfFrame
+
+    ; Start of vertical blank processing
+    ldy #0
+    sty VBLANK
+
+    lda #2
+    sta VSYNC
+    
+	;---------------------------------------------;
+	;VERTICAL SYNC:	3 scanlines of VSYNCH signal..;
+	;---------------------------------------------;
+	ldx #3
+VerticalSync:	
+	sta WSYNC
+	dex
+	bne VerticalSync
+
+    sty VSYNC           
+	
+;============================================================
+;START OF VERTICAL BLANK : 37 scanlines of vertical blank...
+;============================================================
+
+	ldx #44
+	stx TIM64T
+    
+	;=====================================================
+	;INPUT: Controllers
+	;-----------------------------------------------------
+	;The game was made in made with playing with the 
+	;default joystick that comes with the Atari 2600
+	;=====================================================	
+
+	;--------------;
+	;Player 0 INPUT;
+	;--------------;
+
+P0_INPUT:
+	
+	;Check if P0 has ball
+	bit CXP0FB
+	bvs P0_HAS_BALL
+	jmp P0_CONTROLLER
+	
+P0_HAS_BALL:
+	;Making sure player is facing right	
+	sty REFP0
+	
+	;If player is in the throwing motion go to P0_Throw
+	lda is_p0_throwing
+	bne P0_THROW
+	sty p0_frame_counter
+	
+	;Increment value to go above 0
+	inc p0_has_to_throw
+	
+	;Check if player press main action button
+	bit INPT4
+	bpl P0_THROW	
+	
+	;If player 0 has the ball for too long throw it anyway but slower
+	lda p0_has_to_throw
+	cmp #240
+	bcs THROW_SLOW_p0
+	
+	jmp P1_INPUT
+	
+P0_THROW:
+	;If p0 is in throwing motion skip to check sprite	
+	lda is_p0_throwing
+	bne P0_CHECK_SPRITE_FRAME
+	
+	;Up and Right
+	lda #%10010000
+	bit SWCHA
+	beq THROW_UP_RIGHT_p0		
+	
+	;Up and Left
+	lda #%01010000
+	bit SWCHA
+	beq THROW_UP_RIGHT_p0
+	
+	;Down and Right
+	lda #%10100000
+	bit SWCHA
+	beq THROW_DOWN_RIGHT_p0
+	
+	;Down and Left
+	lda #%01100000
+	bit SWCHA
+	beq THROW_DOWN_RIGHT_p0
+	
+	;Right
+	lda #%1000000
+	bit SWCHA
+	beq THROW_RIGHT_p0
+	
+	;Left
+	lda #%01000000
+	bit SWCHA
+	beq THROW_RIGHT_p0
+	
+	;Down
+	lda #%00100000
+	bit SWCHA
+	beq THROW_DOWN_RIGHT_p0
+	
+	;Up
+	lda #%00010000
+	bit SWCHA
+	beq THROW_UP_RIGHT_p0
+	
+THROW_RIGHT_p0:
+	inc is_p0_throwing
+	
+	sty p0_has_to_throw
+	sty ball_vel_y
+		
+	lda #2
+	sta ball_vel_x
+	jmp P0_CHECK_SPRITE_FRAME
+	
+THROW_DOWN_RIGHT_p0:
+	inc is_p0_throwing
+	
+	lda #$FF
+	sta ball_vel_y
+		
+	lda #1
+	sta ball_vel_x
+	jmp P0_CHECK_SPRITE_FRAME
+	
+THROW_UP_RIGHT_p0:	
+	inc is_p0_throwing
+	
+	lda #1
+	sta ball_vel_y
+		
+	lda #1
+	sta ball_vel_x
+	jmp P0_CHECK_SPRITE_FRAME
+	
+THROW_SLOW_p0:	
+	inc is_p0_throwing
+	
+	sty p0_has_to_throw
+	sty ball_vel_y
+		
+	lda #1
+	sta ball_vel_x	
+	
+	;Check if it is in the last throwing sprite
+P0_CHECK_SPRITE_FRAME:	
+	lda p0_frame_counter
+	cmp #9
+	beq P0_CHECK_FRAME
+	jmp P0_SKIP_TO_THROWING_FRAME
+	;Check if it is in the last frame, prior to change into the new sprite
+P0_CHECK_FRAME:
+	lda p0_fps
+	cmp #8
+	beq P0_THROW_BALL
+	jmp P0_SKIP_TO_THROWING_FRAME
+	;Start throwing the ball
+P0_THROW_BALL:
+	sty is_p0_throwing
+	sta CXCLR
+		
+	lda ball_x
+	adc #9
+	sta ball_x
+	
+P0_SKIP_TO_THROWING_FRAME:	
+	jmp THROWING_FRAME_P0
+	
+P0_CONTROLLER:
+	;Up and Right Movement
+	lda #%10010000
+	bit SWCHA
+	beq UP_RIGHT_p0		
+	
+	;Up and Left Movement
+	lda #%01010000
+	bit SWCHA
+	beq UP_LEFT_p0
+	
+	;Down and Right Movement
+	lda #%10100000
+	bit SWCHA
+	beq DOWN_RIGHT_p0
+	
+	;Down and Left Movement
+	lda #%01100000
+	bit SWCHA
+	beq DOWN_LEFT_p0
+	
+	;Right Movement
+	lda #%10000000
+	bit SWCHA
+	beq RIGHT_p0
+	
+	;Left Movement
+	lda #%01000000
+	bit SWCHA
+	beq LEFT_p0
+	
+	;Down Movement
+	lda #%00100000
+	bit SWCHA
+	beq DOWN_p0
+	
+	;Up Movement
+	lda #%00010000
+	bit SWCHA
+	beq UP_p0
+	
+	;If nothing was pressed
+	sty REFP0				;Set it to always face right
+	sty p0_frame_counter	;IDLE frame
+	
+	jmp P1_INPUT
+
+UP_RIGHT_p0:
+	jsr p0_move_up
+	jsr p0_move_right
+	
+	sty REFP0
+	
+	jmp MOVE_HORIZONTAL_FRAME_P0
+	
+UP_LEFT_p0:
+	jsr p0_move_up
+	jsr p0_move_left
+	
+	lda #$FF
+	sta REFP0
+	
+	jmp MOVE_HORIZONTAL_FRAME_P0
+	
+DOWN_RIGHT_p0:
+	jsr p0_move_down
+	jsr p0_move_right
+	
+	sty REFP0
+	
+	jmp MOVE_HORIZONTAL_FRAME_P0
+	
+DOWN_LEFT_p0:
+	jsr p0_move_down
+	jsr p0_move_left
+	
+	lda #$FF
+	sta REFP0
+	
+	jmp MOVE_HORIZONTAL_FRAME_P0
+						
+RIGHT_p0:
+	jsr p0_move_right
+	
+	sty REFP0
+	
+	jmp MOVE_HORIZONTAL_FRAME_P0
+    
+LEFT_p0:
+	jsr p0_move_left
+	
+	lda #$FF
+	sta REFP0
+	
+	jmp MOVE_HORIZONTAL_FRAME_P0
+    
+DOWN_p0:
+	jsr p0_move_down
+	
+	jmp MOVE_VERTICAL_FRAME_P0
+       
+UP_p0:
+	jsr p0_move_up
+	
+	jmp MOVE_VERTICAL_FRAME_P0
+    
+    ;MACROS
+MOVE_HORIZONTAL_FRAME_P0:
+	ANI_CHANGE_FRAME p0_fps, P1_INPUT, p0_frame_counter, 1, 3
+MOVE_VERTICAL_FRAME_P0:
+	ANI_CHANGE_FRAME p0_fps, P1_INPUT, p0_frame_counter, 4, 6
+THROWING_FRAME_P0:
+	ANI_CHANGE_FRAME p0_fps, P1_INPUT, p0_frame_counter, 7, 9
+	;--------------;
+	;Player 1 INPUT;
+	;--------------;
+	
+P1_INPUT:
+	ldx #$ff
+	
+	;Check if P0 has ball
+	bit CXP1FB
+	bvs P1_HAS_BALL
+	jmp P1_CONTROLLER
+	
+P1_HAS_BALL:
+	;Making sure player is facing right	
+	stx REFP1
+	
+	;If player is in the throwing motion go to P0_Throw
+	lda is_p1_throwing
+	bne P1_THROW
+	sty p1_frame_counter
+	
+	;Increment value to go above 0
+	inc p1_has_to_throw
+	
+	;Check if player press main action button
+	bit INPT5
+	bpl P1_THROW	
+	
+	;If player 0 has the ball for too long throw it anyway but slower
+	lda p1_has_to_throw
+	cmp #240
+	bcs THROW_SLOW_p1
+	
+	jmp EXIT_INPUT
+	
+P1_THROW:
+	;If p0 is in throwing motion skip to check sprite	
+	lda is_p1_throwing
+	bne P1_CHECK_SPRITE_FRAME
+	
+	;Up and Right
+	lda #%00001001
+	bit SWCHA
+	beq THROW_UP_LEFT_p1		
+	
+	;Up and Left
+	lda #%00000101
+	bit SWCHA
+	beq THROW_UP_LEFT_p1
+	
+	;Down and Right
+	lda #%00001010
+	bit SWCHA
+	beq THROW_DOWN_LEFT_p1
+	
+	;Down and Left
+	lda #%00000110
+	bit SWCHA
+	beq THROW_DOWN_LEFT_p1
+	
+	;Right
+	lda #%00001000
+	bit SWCHA
+	beq THROW_LEFT_p1
+	
+	;Left
+	lda #%00000100
+	bit SWCHA
+	beq THROW_LEFT_p1
+	
+	;Down
+	lda #%00000010
+	bit SWCHA
+	beq THROW_DOWN_LEFT_p1
+	
+	;Up
+	lda #%00000001
+	bit SWCHA
+	beq THROW_UP_LEFT_p1
+	
+THROW_LEFT_p1:
+	inc is_p1_throwing
+	
+	sty p1_has_to_throw
+	sty ball_vel_y
+		
+	lda #$FE
+	sta ball_vel_x
+	jmp P1_CHECK_SPRITE_FRAME
+	
+THROW_DOWN_LEFT_p1:
+	inc is_p1_throwing
+	
+	stx ball_vel_y		
+	stx ball_vel_x
+	
+	jmp P1_CHECK_SPRITE_FRAME
+	
+THROW_UP_LEFT_p1:	
+	inc is_p1_throwing
+	
+	lda #1
+	sta ball_vel_y		
+	stx ball_vel_x
+	
+	jmp P1_CHECK_SPRITE_FRAME
+	
+THROW_SLOW_p1:	
+	inc is_p1_throwing
+	
+	sty p1_has_to_throw
+	sty ball_vel_y
+		
+	stx ball_vel_x	
+	
+	;Check if it is in the last throwing sprite
+P1_CHECK_SPRITE_FRAME:	
+	lda p1_frame_counter
+	cmp #9
+	beq P1_CHECK_FRAME
+	jmp P1_SKIP_TO_THROWING_FRAME
+	;Check if it is in the last frame, prior to change into the new sprite
+P1_CHECK_FRAME:
+	lda p1_fps
+	cmp #8
+	beq P1_THROW_BALL
+	jmp P1_SKIP_TO_THROWING_FRAME
+	;Start throwing the ball
+P1_THROW_BALL:
+	sty is_p1_throwing
+	sta CXCLR
+	
+	sec
+	lda ball_x
+	sbc #9
+	sta ball_x
+	
+P1_SKIP_TO_THROWING_FRAME:	
+	jmp THROWING_FRAME_P1
+	
+P1_CONTROLLER:
+	;Up and Right Movement
+	lda #%00001001
+	bit SWCHA
+	beq UP_RIGHT_p1
+	
+	;Up and Left Movement
+	lda #%00000101
+	bit SWCHA
+	beq UP_LEFT_p1
+	
+	;Down and Right Movement
+	lda #%00001010
+	bit SWCHA
+	beq DOWN_RIGHT_p1
+	
+	;Down and Left Movement
+	lda #%00000110
+	bit SWCHA
+	beq DOWN_LEFT_p1
+	
+	;Right Movement
+	lda #%00001000
+	bit SWCHA
+	beq RIGHT_p1
+
+	;Left Movement
+	lda #%00000100
+	bit SWCHA
+	beq LEFT_p1
+	
+	;Down Movement
+	lda #%00000010
+	bit SWCHA
+	beq DOWN_p1
+	
+	;Up Movement
+	lda #%00000001
+	bit SWCHA
+	beq UP_p1
+	
+	;If nothing was pressed
+	stx REFP1 				;Set it to alwasy face left	
+	sty p1_frame_counter	;IDLE Animation
+	
+	jmp EXIT_INPUT
+
+UP_RIGHT_p1:
+	jsr p1_move_up
+	jsr p1_move_right
+	
+	sty REFP1
+	
+	jmp MOVE_HORIZONTAL_FRAME_P1	
+	
+UP_LEFT_p1:
+	jsr p1_move_up
+	jsr p1_move_left
+
+	stx REFP1
+	
+	jmp MOVE_HORIZONTAL_FRAME_P1
+	
+DOWN_RIGHT_p1:
+	jsr p1_move_down
+	jsr p1_move_right
+	
+	sty REFP1
+	
+	jmp MOVE_HORIZONTAL_FRAME_P1
+	
+DOWN_LEFT_p1:
+	jsr p1_move_down
+	jsr p1_move_left
+	
+	stx REFP1
+	
+	jmp MOVE_HORIZONTAL_FRAME_P1
+	
+RIGHT_p1:
+	jsr p1_move_right
+	
+	sty REFP1
+	
+	jmp MOVE_HORIZONTAL_FRAME_P1
+    
+LEFT_p1:
+	jsr p1_move_left
+	
+	stx REFP1
+	
+	jmp MOVE_HORIZONTAL_FRAME_P1
+    
+DOWN_p1:
+	jsr p1_move_down
+	
+	jmp MOVE_VERTICAL_FRAME_P1
+    
+UP_p1:
+	jsr p1_move_up
+	
+	jmp MOVE_VERTICAL_FRAME_P1      
+	
+	;--Macros
+MOVE_HORIZONTAL_FRAME_P1:
+	ANI_CHANGE_FRAME p1_fps, EXIT_INPUT, p1_frame_counter, 1, 3
+MOVE_VERTICAL_FRAME_P1:
+	ANI_CHANGE_FRAME p1_fps, EXIT_INPUT, p1_frame_counter, 4, 6
+THROWING_FRAME_P1:
+	ANI_CHANGE_FRAME p1_fps, EXIT_INPUT, p1_frame_counter, 7, 9 
+EXIT_INPUT:	
+	;Move Object on X coordinates
+
+	;Move Missile 0	
+	lda #78
+	ldx #2
+	jsr PosObj
+	
+	;Move Missile 1	
+	lda #80
+	ldx #3
+	jsr PosObj
+	
+	;Move Player 0	
+	lda p0_x
+	ldx #0
+	jsr PosObj
+    
+    ;Move Player 1
+    lda p1_x
+	ldx #1
+	jsr PosObj
+	
+	;Move Ball
+	lda ball_x
+	ldx #4
+	jsr PosObj
+	 
+	;Set Wait Sync and set HMOVE to apply fine/precisse possition
+	sta WSYNC
+    sta HMOVE 
+     
+    ;----------------------;
+    ;--2 Line Kernel data--;
+	;----------------------;
+	;Player 0 Draw Data
+	lda #(COURT_SIZE + PLAYER_HEIGHT)
+	sec
+	sbc p0_y
+	sta p0_draw
+	;Player 0 Pointer
+	ldx p0_frame_counter
+	
+	lda PLAYER_ANIMATION_LOW_PTR,X
+	sec
+	sbc p0_y
+	sta p0_ptr
+	lda PLAYER_ANIMATION_HIGH_PTR,X
+	sbc #0
+	sta p0_ptr+1
+	;Player 1 Draw Data
+	lda #(COURT_SIZE + PLAYER_HEIGHT)
+	sec
+	sbc p1_y
+	sta p1_draw
+	;Player 1 Pointer
+	ldx p1_frame_counter
+	
+	lda PLAYER_ANIMATION_LOW_PTR,X	
+	sec
+	sbc p1_y
+	sta p1_ptr
+	lda PLAYER_ANIMATION_HIGH_PTR,X
+	sbc #0
+	sta p1_ptr+1
+    sta WSYNC
+    
+    ;Ball Data
+    lda #(COURT_SIZE + BALL_SIZE)
+    sec
+    sbc ball_y
+    sta ball_draw
+    
+    ;--Prep data for scoreboard
+	ldx #1
+sc_data:
+	;Ones Digit
+	lda p0_points,X
+	and #$0f
+	sta temp
+	asl
+	asl
+	adc temp
+	sta digit_ones,X
+	;Tens Digit
+	lda p0_points,X
+	and #$f0
+	lsr
+	lsr
+	sta temp
+	lsr
+	lsr	
+	adc temp
+	sta digit_tens,X
+	dex
+	bpl sc_data
+	
+VerticalBlank:
+	lda INTIM
+	sta WSYNC
+	bne VerticalBlank
+    ;-------------------------;
+	;--END OF VERTICAL BLANK--;
+	;-------------------------;
+    
+    ;------------------------------------------;
+    ;--DISPLAY AREA: 192 scanlines of picture..;
+	;------------------------------------------;
+	
+	;--START OF SCOREBOARD
+	lda #0
+	sta COLUBK
+
+	ldy #%00000010
+	sty CTRLPF
+	
+	ldx #5
+sc_loop:
+	ldy digit_tens
+	lda SB_Digit_Gfx,Y
+	and #$f0
+	sta p0_digit_gfx
+	ldy digit_ones
+	lda SB_Digit_Gfx,Y
+	and #$0f
+	ora p0_digit_gfx
+	sta p0_digit_gfx
+	sta WSYNC
+	
+	sta PF1
+	ldy digit_tens+1
+	lda SB_Digit_Gfx,Y
+	and #$f0
+	sta p1_digit_gfx
+	ldy digit_ones+1
+	lda SB_Digit_Gfx,Y
+	and #$0f
+	ora p1_digit_gfx
+	sta p1_digit_gfx
+	SLEEP 12
+	sta PF1
+	ldy p0_digit_gfx
+	sta WSYNC
+	
+	sty PF1
+	inc digit_tens
+	inc digit_tens+1
+	inc digit_ones
+	inc digit_ones+1
+	SLEEP 12
+	dex
+	sta PF1
+	bne sc_loop
+	sta WSYNC
+	
+	stx PF1
+	sta WSYNC
+	
+	REPEAT 30
+		sta WSYNC
+	REPEND
+	
+	;--START OF TOP BACKGROUND
+	lda #4
+	sta COLUBK
+	
+	REPEAT 37
+		sta WSYNC
+	REPEND
+	
+	lda #$F8
+	sta COLUBK
+	;--START OF COURT
+	
+	;Space for top of the court
+	REPEAT 2
+		sta WSYNC
+	REPEND
+	;Setup playfield
+	ldx #%00100101
+	stx CTRLPF
+	
+	;Change size for Missiles
+	lda #%00010000
+	sta NUSIZ0
+	sta NUSIZ1
+	
+	lda #%10000000
+	sta PF0
+	lda #$FF
+	sta PF1
+	sta PF2	
+	;Enable Missile for Court Division
+	sta ENAM0
+	sta ENAM1
+	
+	;TOP part of the COURT
+	REPEAT 4
+		sta WSYNC
+	REPEND	
+	
+    ldy #COURT_SIZE
+Court:
+	lda #PLAYER_HEIGHT -1
+	dcp p0_draw
+	bcs DoDrawGRP0
+	lda #0
+	.byte $2c
+	
+DoDrawGRP0:
+	lda (p0_ptr),Y
+	sta WSYNC
+	
+	sta GRP0
+	
+	ldx #1
+	lda #BALL_SIZE
+	dcp ball_draw
+	bcs DoBall
+	lda #0
+	.byte $24
+
+DoBall:
+	inx
+		
+	lda #PLAYER_HEIGHT-1
+	dcp p1_draw
+	bcs DoDrawGRP1
+	lda #0
+	.byte $2c
+	
+DoDrawGRP1:
+	lda (p1_ptr),Y
+	sta WSYNC
+	
+	sta GRP1
+	
+	;PLAYFIELD
+	lda #0
+	sta PF1
+	stx ENABL	
+	sta PF2
+	
+    dey    
+    bne Court	
+
+	lda #$FF
+	sta PF1
+	sta PF2
+	
+	;Added this code to remove tearing
+	ldx #0
+	stx ENABL
+	
+	;BOTTOM part of the COURT
+	REPEAT 6
+		sta WSYNC
+	REPEND
+	
+	lda #0
+	sta PF0
+	sta PF1
+	sta PF2
+	;Disenable Missile for Court Division
+	sta ENAM0
+	sta ENAM1
+	
+	;Space for between the court and the background playfield
+	REPEAT 2
+		sta WSYNC
+	REPEND
+	
+	;--START OF BOTTOM BACKGROUND
+	lda #4
+	sta COLUBK
+	
+	REPEAT 20
+		sta WSYNC
+	REPEND
+	
+	lda #%01000010
+    sta VBLANK 	; end of screen - enter blanking	
+	;-----------------------;
+	;--END OF DISPLAY AREA--;
+	;-----------------------;
+
+	;---------------------------------------;
+	;--OVERSCAN: 30 scanlines of overscan...;
+	;---------------------------------------;
+	
+	;--Change Ball Movement
+	lda ball_x
+	;Change the carry depending if it is positive or negative
+	bpl change_carry_x
+	sec
+	.byte $24
+change_carry_x:
+	clc	
+	adc ball_vel_x
+	sta ball_x
+	
+	lda ball_y
+	;Change the carry depending if it is positive or negative
+	bpl change_carry_y
+	sec
+	.byte $24
+change_carry_y:
+	clc	
+	adc ball_vel_y
+	sta ball_y
+	
+	;Change the ball velocity to negative
+	lda ball_y
+	cmp #COURT_SIZE
+	bcc skip_ball_down
+	
+	lda #$ff
+	sta ball_vel_y	
+skip_ball_down:	
+	;Change the ball velocity to positive
+	lda ball_y
+	cmp #3
+	bcs skip_ball_up
+	
+	lda #1
+	sta ball_vel_y
+skip_ball_up:	
+	;Check if Player 1 scored
+	lda ball_x
+	cmp #$f
+	bne skip_p1_score
+	sed
+	clc
+	lda p1_points
+	adc #1
+	sta p1_points
+	cld
+
+skip_p1_score
+	
+	;Check if Player 0 scored
+	lda ball_x
+	cmp #$90
+	bne skip_p0_score
+	sed
+	clc
+	lda p0_points
+	adc #1
+	sta p0_points
+	cld
+skip_p0_score
+
+	;Check if ball cx Player 0
+	lda #%01000000
+	bit CXP0FB
+	bvc skip_p0_ball
+	
+	;Ball Collided with PLayer 0
+	sec
+	lda p0_x
+	sbc #3
+	sta ball_x	
+	lda p0_y
+	sbc #5
+	sta ball_y
+skip_p0_ball:	
+	
+	;Check if ball cx Player 1
+	lda #%01000000
+	bit CXP1FB
+	bvc skip_p1_ball
+	
+	;Ball Collided with PLayer 1
+	
+	lda p1_x
+	clc
+	adc #7
+	sta ball_x
+	lda p1_y
+	sec
+	sbc #5
+	sta ball_y
+skip_p1_ball:
+	
+	ldy #30
+Overscan:	
+	sta WSYNC
+	dey
+	bne Overscan		
+	;-------------------;
+	;--END OF OVERSCAN--;
+	;-------------------;
+
+	jmp StartOfFrame
+
+	;-----------------;
+	;--DATA AREA------;
+	;--TODO: ADD SEG--;
+	;-----------------;
+	
+PLAYER_ANIMATION_LOW_PTR:
+		.byte <(PLAYER_IDLE + PLAYER_HEIGHT - 1)		;0
+		.byte <(PLAYER_MOVE_LF0 + PLAYER_HEIGHT - 1)	;1
+		.byte <(PLAYER_MOVE_LF1 + PLAYER_HEIGHT - 1)	;2
+		.byte <(PLAYER_MOVE_LF2 + PLAYER_HEIGHT - 1)	;3
+		.byte <(PLAYER_MOVE_UD0 + PLAYER_HEIGHT - 1)	;4
+		.byte <(PLAYER_MOVE_UD1 + PLAYER_HEIGHT - 1)	;5
+		.byte <(PLAYER_MOVE_UD2 + PLAYER_HEIGHT - 1)	;6
+		.byte <(PLAYER_THROWING0 + PLAYER_HEIGHT - 1)	;7
+		.byte <(PLAYER_THROWING1 + PLAYER_HEIGHT - 1)	;8
+		.byte <(PLAYER_THROWING2 + PLAYER_HEIGHT - 1)	;9
+		
+PLAYER_ANIMATION_HIGH_PTR:
+		.byte >(PLAYER_IDLE + PLAYER_HEIGHT - 1)		;0
+		.byte >(PLAYER_MOVE_LF0 + PLAYER_HEIGHT - 1)	;1
+		.byte >(PLAYER_MOVE_LF1 + PLAYER_HEIGHT - 1)	;2
+		.byte >(PLAYER_MOVE_LF2 + PLAYER_HEIGHT - 1)	;3
+		.byte >(PLAYER_MOVE_UD0 + PLAYER_HEIGHT - 1)	;4
+		.byte >(PLAYER_MOVE_UD1 + PLAYER_HEIGHT - 1)	;5
+		.byte >(PLAYER_MOVE_UD2 + PLAYER_HEIGHT - 1)	;6
+		.byte >(PLAYER_THROWING0 + PLAYER_HEIGHT - 1)	;7
+		.byte >(PLAYER_THROWING1 + PLAYER_HEIGHT - 1)	;8
+		.byte >(PLAYER_THROWING2 + PLAYER_HEIGHT - 1)	;9
+
+	;--------------;
+	;--SCOREBOARD--;
+	;--------------;
+		align 256
+SB_Digit_Gfx:
+        .byte %01110111
+        .byte %01010101
+        .byte %01010101
+        .byte %01010101
+        .byte %01110111
+        
+        .byte %00010001
+        .byte %00010001
+        .byte %00010001
+        .byte %00010001        
+        .byte %00010001
+        
+        .byte %01110111
+        .byte %00010001
+        .byte %01110111
+        .byte %01000100
+        .byte %01110111
+        
+        .byte %01110111
+        .byte %00010001
+        .byte %00110011
+        .byte %00010001
+        .byte %01110111
+        
+        .byte %01010101
+        .byte %01010101
+        .byte %01110111
+        .byte %00010001
+        .byte %00010001
+        
+        .byte %01110111
+        .byte %01000100
+        .byte %01110111
+        .byte %00010001
+        .byte %01110111
+           
+        .byte %01110111
+        .byte %01000100
+        .byte %01110111
+        .byte %01010101
+        .byte %01110111
+        
+        .byte %01110111
+        .byte %00010001
+        .byte %00010001
+        .byte %00010001
+        .byte %00010001
+        
+        .byte %01110111
+        .byte %01010101
+        .byte %01110111
+        .byte %01010101
+        .byte %01110111
+        
+        .byte %01110111
+        .byte %01010101
+        .byte %01110111
+        .byte %00010001
+        .byte %01110111
+        
+	;-------------;
+	;--ANIMATION--;
+	;-------------;
+PLAYER_IDLE:
+        .byte #%01100110;--
+        .byte #%00100100;--
+        .byte #%00011000;--
+        .byte #%01011010;--
+        .byte #%00111100;--
+        .byte #%00000000;--
+        .byte #%00001100;--
+        .byte #%00001100;--
+PLAYER_HEIGHT = * - PLAYER_IDLE
+
+;--Player Movement for Left and Right--;
+PLAYER_MOVE_LF0:
+        .byte #%00000110;--
+        .byte #%01000100;--
+        .byte #%01101000;--
+        .byte #%00011100;--
+        .byte #%00100010;--
+        .byte #%00001100;--
+        .byte #%00001100;--
+        .byte #%00000000;--
+PLAYER_MOVE_LF1:        
+		.byte #%00001100;--
+        .byte #%00001000;--
+        .byte #%00011000;--
+        .byte #%00101100;--
+        .byte #%00011100;--
+        .byte #%00000000;--
+        .byte #%00001100;--
+        .byte #%00001100;----
+PLAYER_MOVE_LF2:        
+		.byte #%01100000;--
+        .byte #%01000110;--
+        .byte #%00011100;--
+        .byte #%00111000;--
+        .byte #%00000010;--
+        .byte #%00001100;--
+        .byte #%00001100;--
+        .byte #%00000000;----
+		
+	;--Player Movement for Up and Down--;
+PLAYER_MOVE_UD0:
+		.byte #%00110000;--
+        .byte #%00011100;--
+        .byte #%00011000;--
+        .byte #%00011010;--
+        .byte #%00111100;--
+        .byte #%01000000;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+PLAYER_MOVE_UD1:
+        .byte #%01100110;--
+        .byte #%00111100;--
+        .byte #%00011000;--
+        .byte #%00111100;--
+        .byte #%00000000;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+        .byte #%00000000;--
+PLAYER_MOVE_UD2:
+        .byte #%00001100;--
+        .byte #%00111000;--
+        .byte #%00011000;--
+        .byte #%01011000;--
+        .byte #%00111100;--
+        .byte #%00000010;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+
+	;--Player Throwing Disc--;
+PLAYER_THROWING0:
+        .byte #%00110000;--
+        .byte #%00101100;--
+        .byte #%00011000;--
+        .byte #%01011100;--
+        .byte #%00111000;--
+        .byte #%00000000;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+PLAYER_THROWING1:
+        .byte #%00011100;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+        .byte #%00011100;--
+        .byte #%01111100;--
+        .byte #%00000000;--
+        .byte #%00001100;--
+        .byte #%00001100;--
+PLAYER_THROWING2:
+        .byte #%00101100;--
+        .byte #%00111000;--
+        .byte #%00011000;--
+        .byte #%00111000;--
+        .byte #%00011110;--
+        .byte #%00000000;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+PLAYER_JUMP_LF0:
+        .byte #%00000000;--
+        .byte #%00000100;--
+        .byte #%01001000;--
+        .byte #%00110110;--
+        .byte #%00110110;--
+        .byte #%01001000;--
+        .byte #%00000100;--
+        .byte #%00000000;--
+PLAYER_JUMP_LF1:
+        .byte #%00000000;--
+        .byte #%00001100;--
+        .byte #%01010000;--
+        .byte #%00101100;--
+        .byte #%00101100;--
+        .byte #%01010000;--
+        .byte #%00001100;--
+        .byte #%00000000;--
+PLAYER_JUMP_LF2:
+        .byte #%00000000;--
+        .byte #%01000110;--
+        .byte #%00101000;--
+        .byte #%00010110;--
+        .byte #%00010110;--
+        .byte #%00101000;--
+        .byte #%01000110;--
+        .byte #%00000000;--
+PLAYER_JUMP_LF_STILL:
+        .byte #%00000000;--
+        .byte #%00000110;--
+        .byte #%01101000;--
+        .byte #%00010110;--
+        .byte #%00010110;--
+        .byte #%01101000;--
+        .byte #%00000110;--
+        .byte #%00000000;--
+PLAYER_JUMP_UD0:
+        .byte #%00100100;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+        .byte #%00100100;--
+        .byte #%01011010;--
+        .byte #%00011000;--
+        .byte #%00000000;--
+        .byte #%00000000;--
+PLAYER_JUMP_UD1:
+        .byte #%00100100;--
+        .byte #%00100100;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+        .byte #%00100100;--
+        .byte #%01011010;--
+        .byte #%00011000;--
+        .byte #%00000000;--
+PLAYER_JUMP_UD2:
+        .byte #%00000000;--
+        .byte #%00100100;--
+        .byte #%00100100;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+        .byte #%00100100;--
+        .byte #%01011010;--
+        .byte #%01011010;--
+PLAYER_JUMP_UD_STILL:
+        .byte #%00100100;--
+        .byte #%00100100;--
+        .byte #%00011000;--
+        .byte #%00011000;--
+        .byte #%00100100;--
+        .byte #%01011010;--
+        .byte #%01011010;--
+        .byte #%00100100;--
+	;--------------------;
+	;--END OF ANIMATION--;
+	;--------------------;
+	
+	ORG $FFFA	
+	;--------------------;
+	;--END OF DATA AREA--;
+	;--------------------;
+
+	;--------------;
+	;--INTERRUPTS--;
+	;--------------;
+    .word Reset          ; NMI
+    .word Reset          ; RESET
+    .word Reset          ; IRQ
+	
+	;---------------;
+	;--END OF FILE--;
+	;---------------;
+   	END
+    	
