@@ -2673,8 +2673,8 @@ skip_ball_chase:
 
 	;Check if position is off by super
 	lda ai_position_x
-	cmp #80
-	bcc contine_super_position
+	cmp super_x
+	bne contine_super_position
 	jmp randomize_positions
 contine_super_position:
 
